@@ -1,0 +1,28 @@
+# Data directories
+data/
+*/data/
+**/data/
+
+# Cache directories
+cache/
+*/cache/
+**/cache/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Jupyter notebook outputs (optional - keeps code cells clean)
+*.ipynb_checkpoints
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# VS Code
+.vscode/
+.idea/
