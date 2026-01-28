@@ -25,6 +25,7 @@ def get_FeatureToVolName(feature):
     return vol_map[ft_fmt]
 
 def vol_check(study, demo, features, verbose=True):
+    cols_added = []
     for ft in features:
         volName = get_FeatureToVolName(ft)
         col_name = f'hasVol_{volName}'
@@ -32,6 +33,7 @@ def vol_check(study, demo, features, verbose=True):
             print(f"\tAdding volume check column: {col_name}")
 
         demo[col_name] = True
+        cols_added.append(col_name)
 
         for idx, row in demo.iterrows():
             sT_ID = row['PNI_ID']
@@ -41,7 +43,7 @@ def vol_check(study, demo, features, verbose=True):
             if not os.path.exists(pth):
                 print(f"\t\tMissing volume | {sT_ID}-{ses} can't find: {pth}")
                 demo.loc[idx, col_name] = False
-    return demo
+    return demo, cols_added
 
 # get resolution of data
 def get_resolution(pth):
@@ -72,7 +74,8 @@ def check_res(pth, target_res=(0.5, 0.5, 0.5), epsilon = 0.001):
 
 def resolution_check(demo, study, res_trgt, feature='T1map', epsilon=0.001, verbose=False):
     # initialize a proper boolean column for the whole DataFrame to avoid SettingWithCopy and invalid index errors
-    demo['properRes'] = True
+    col_name = f'properRes'
+    demo[col_name] = True
 
     res_dictList = []
     volName = get_FeatureToVolName(feature)
@@ -85,16 +88,16 @@ def resolution_check(demo, study, res_trgt, feature='T1map', epsilon=0.001, verb
         if not os.path.exists(pth):
             if verbose:
                 print(f'\tFile does not exist\t| {sT_ID}-{ses}: {pth}')
-            demo.loc[idx, 'properRes'] = np.nan
+            demo.loc[idx, col_name] = np.nan
             continue
         match_res, res = check_res(pth, target_res=res_trgt, epsilon=epsilon)
         if match_res == False:
             if verbose:
                 print(f"\tNon-standard resolution\t| {sT_ID}-{ses}: res = {res}")
-            demo.loc[idx, 'properRes'] = False
+            demo.loc[idx, col_name] = False
             continue
         res_dictList.append({'ST_ID': sT_ID, 'SES': ses, 'resolution': res})
-    return demo, res_dictList
+    return demo, res_dictList, [col_name]
 
 # check surface processing
 def surf_check(pth, verbose=True):
@@ -123,30 +126,39 @@ def mp_processed(study, id, ses, label, surface):
 
 
 def proc_check(study, demo, mp_surfaces, hu_surfaces, verbose=True):
+    def make_colName(lbl, surf, prefix):
+        return f"{prefix}_{lbl}_{surf}"
+    
+    mp_colName_prefix = 'mp_proc'
+    hu_colName_prefix = 'hu_proc'
+
+    cols_added = []
     for mp_lbl, mp_surf in itertools.product(mp_surfaces['lbl'], mp_surfaces['surf']):
-        col = 'mp_proc_' + mp_lbl + '_' + mp_surf
+        col = make_colName(mp_lbl, mp_surf, mp_colName_prefix)
         demo[col] = False
+        cols_added.append(col)
     for hu_lbl, hu_surf in itertools.product(hu_surfaces['lbl'], hu_surfaces['surf']):
-        col = 'hu_proc_' + hu_lbl + '_' + hu_surf
+        col = make_colName(hu_lbl, hu_surf, hu_colName_prefix)
         demo[col] = False
+        cols_added.append(col)
 
     for idx, row in demo.iterrows():
         sT_ID = row['PNI_ID']
         ses = row['SES']
 
         for mp_lbl, mp_surf in itertools.product(mp_surfaces['lbl'], mp_surfaces['surf']):
-            col = 'mp_proc_' + mp_lbl + '_' + mp_surf
+            col = make_colName(mp_lbl, mp_surf, mp_colName_prefix)
             mp_done = mp_processed(study, sT_ID, ses, mp_lbl, mp_surf)
             demo.loc[idx, col] = mp_done
         for hu_lbl, hu_surf in itertools.product(hu_surfaces['lbl'], hu_surfaces['surf']):
-            col = 'hu_proc_' + hu_lbl + '_' + hu_surf
+            col = make_colName(hu_lbl, hu_surf, hu_colName_prefix)
             hu_done = hu_processed(study, sT_ID, ses, hu_lbl, hu_surf)
             demo.loc[idx, col] = hu_done
     
     if verbose:
         # count all missing proc for all mp, hu columns. Print summary:
-        mp_proc_cols = [col for col in demo.columns if col.startswith('mp_proc_')]
-        hu_proc_cols = [col for col in demo.columns if col.startswith('hu_proc_')]
+        mp_proc_cols = [col for col in cols_added if col.startswith(mp_colName_prefix)]
+        hu_proc_cols = [col for col in cols_added if col.startswith(hu_colName_prefix)]
         mp_missing = hu_missing = 0
         for col in mp_proc_cols:
             mp_missing += demo[~demo[col]].shape[0]
@@ -157,4 +169,19 @@ def proc_check(study, demo, mp_surfaces, hu_surfaces, verbose=True):
         print(f"Micapipe: {mp_missing} surfaces missing")
         print(f"Hippunfold: {hu_missing} surfaces missing")
 
-    return demo
+    return demo, cols_added
+
+
+def filter_qcCols(demo, qc_cols):
+    # input stats:
+    n_uid = demo['UID'].nunique()
+
+    qc_cols = [col for col in qc_cols if col in demo.columns]
+    demo_qc = demo[demo[qc_cols].all(axis=1)]
+    
+    # should keep all rows that were removed due to QC
+    rm_rows = demo[~demo[qc_cols].all(axis=1)]
+    n_uid_out = demo_qc['UID'].nunique()
+
+    print(f"[filter_qcCols] {rm_rows.shape[0]} rows ({n_uid - n_uid_out} unique participants) removed when filtering QC cols: {qc_cols}")
+    return demo_qc, rm_rows
