@@ -6,8 +6,10 @@ def getCMD_freeView(surf_pths:list, vol_pth:str, colour=True) ->  str:
         "hipp_outer": 'magenta',
         "hipp_midthickness": 'cyan',
         "midthickness": 'blue',
-        "pial": 'red',
-        "white": 'yellow'
+        "pial": 'yellow',
+        "white": 'red',
+        "ctxSurf-fsLR-32k_ctxLbl-white_hippSurf-den-0p5mm_hippLbl-outer_stitched": "green",
+        "ctxSurf-fsLR-32k_ctxLbl-pial_hippSurf-den-0p5mm_hippLbl-inner_stitched": "cyan",
     }
 
     for surf in surf_pths:

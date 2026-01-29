@@ -10,6 +10,16 @@ import bids_naming as names
 
 importlib.reload(names) # in case changes since last loaded
 
+def check_paths_exist(pths:list):
+    out = []
+    for pth in pths:
+        if not os.path.exists(pth):
+            print(f"Path does not exist: {pth}")
+            out.append(False)
+        else:
+            out.append(True)
+    return out
+
 # check volumes present
 def get_FeatureToVolName(feature):
     ft_fmt = feature.lower()

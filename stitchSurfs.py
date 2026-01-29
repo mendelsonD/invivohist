@@ -10,7 +10,6 @@ import numpy as np
 import nibabel as nib
 from nibabel.gifti import GiftiImage, GiftiDataArray
 from nibabel.nifti1 import intent_codes
-
 from dataclasses import dataclass
 
 #==========================================
@@ -95,6 +94,7 @@ def gifti_remove_bad_vertices(gi: GiftiImage, bad_idx) -> GiftiImage:
 
     return new_gi
 
+
 def _get_points(x):
     """Extract (N,3) POINTSET array from a GiftiImage or pass-through if already ndarray."""
     if isinstance(x, GiftiImage):
@@ -109,6 +109,7 @@ def _get_points(x):
         raise ValueError("Vertices must be an array of shape (N, 3).")
     return pts
 
+
 def vertices_within_threshold(
     surf_a,
     surf_b,
@@ -119,25 +120,6 @@ def vertices_within_threshold(
     """
     Return indices (or boolean mask) where the vertex-wise Euclidean distance
     between two corresponding surfaces is < threshold_mm.
-
-    Parameters
-    ----------
-    surf_a, surf_b : GiftiImage or np.ndarray
-        Each either a nibabel GiftiImage (with a single POINTSET) or an (N,3) array.
-        Assumes 1:1 vertex correspondence and same coordinate space/units.
-    threshold_mm : float
-        Distance threshold in mm. Default 0.5.
-    return_mask : bool
-        If True, return a boolean mask of shape (N,) instead of indices.
-    return_distances : bool
-        If True, also return the per-vertex distances (shape (N,)).
-
-    Returns
-    -------
-    idx_or_mask : np.ndarray
-        Indices where distance < threshold_mm, or boolean mask if return_mask=True.
-    distances (optional) : np.ndarray
-        Per-vertex distances (sqrt of squared differences), if return_distances=True.
     """
     A = _get_points(surf_a)
     B = _get_points(surf_b)
@@ -147,7 +129,7 @@ def vertices_within_threshold(
 
     # Handle NaNs/infs robustly: mark them as not-close
     valid = np.all(np.isfinite(A), axis=1) & np.all(np.isfinite(B), axis=1)
-    d2 = np.full(A.shape[0], np.inf, dtype=A.dtype)
+    d2 = np.full(A.shape[0], np.inf, dtype=float)
     d2[valid] = np.sum((A[valid] - B[valid])**2, axis=1)
     dist = np.sqrt(d2)
 
@@ -158,12 +140,9 @@ def vertices_within_threshold(
         return out, dist
     return out
 
-import numpy as np
-import nibabel as nib
-from nibabel.gifti import GiftiImage
-from nibabel.nifti1 import intent_codes
 from scipy.spatial import cKDTree
 from collections import deque
+
 
 def _gifti_vertices_faces(gi: GiftiImage):
     POINTSET = intent_codes['NIFTI_INTENT_POINTSET']
@@ -176,11 +155,13 @@ def _gifti_vertices_faces(gi: GiftiImage):
     F = np.asarray(fs[0].data, dtype=np.int64)
     return V, F
 
+
 def _build_vertex_adjacency(faces, n_vertices):
     adj = [[] for _ in range(n_vertices)]
     for a, b, c in faces:
         adj[a].extend([b, c]); adj[b].extend([a, c]); adj[c].extend([a, b])
     return [np.unique(nei) for nei in adj]
+
 
 def _largest_components(mask, faces, k=1, min_size=0):
     """Keep the k largest connected components inside mask (by vertex adjacency)."""
@@ -217,6 +198,7 @@ def _largest_components(mask, faces, k=1, min_size=0):
         out[c] = True
     return out
 
+
 def _morph_mesh(mask: np.ndarray, adj, n_dilate=0, n_erode=0):
     """Dilate then erode a boolean mask on mesh adjacency graph."""
     out = mask.copy()
@@ -234,6 +216,7 @@ def _morph_mesh(mask: np.ndarray, adj, n_dilate=0, n_erode=0):
         out = new_out
     return out
 
+
 def carve_neocortex_by_distance_gifti(
     H_gifti: GiftiImage,
     C_gifti: GiftiImage,
@@ -246,28 +229,6 @@ def carve_neocortex_by_distance_gifti(
     """
     Return indices of neocortical vertices to remove based on distance to hippocampus,
     then filter components and apply dilation→erosion morphology.
-
-    Parameters
-    ----------
-    H_gifti : GiftiImage
-        Hippocampal surface.
-    C_gifti : GiftiImage
-        Neocortical surface.
-    tau_mm : float
-        Distance threshold in mm for removal.
-    n_dilate : int
-        Number of dilation iterations.
-    n_erode : int
-        Number of erosion iterations (applied after dilation).
-    keep_largest_component : bool
-        If True, keep only the largest connected component of the removal mask.
-    min_component_size : int
-        Minimum size (in vertices) of a component to keep if not using keep_largest_component.
-
-    Returns
-    -------
-    remove_idx : np.ndarray
-        Indices of vertices to remove.
     """
     H_V, _ = _gifti_vertices_faces(H_gifti)
     C_V, C_F = _gifti_vertices_faces(C_gifti)
@@ -289,12 +250,7 @@ def carve_neocortex_by_distance_gifti(
 
     return np.nonzero(remove_mask)[0]
 
-import numpy as np
 from collections import defaultdict
-from scipy.spatial import cKDTree
-import nibabel as nib
-from nibabel.gifti import GiftiImage, GiftiDataArray
-from nibabel.nifti1 import intent_codes
 
 # ---------- basic helpers ----------
 
@@ -311,6 +267,7 @@ def _gifti_vertices_faces(gi: GiftiImage):
         raise ValueError("Expected V:(N,3) and F:(M,3).")
     return V, F
 
+
 def _boundary_edges_and_vertices(faces, n_vertices):
     edge_count = defaultdict(int)
     for a,b,c in faces:
@@ -325,6 +282,7 @@ def _boundary_edges_and_vertices(faces, n_vertices):
     for u,v in edges_bdry:
         badj[u].append(v); badj[v].append(u)
     return edges_bdry, vert_mask, badj
+
 
 def _order_boundary_loop(badj, comp_vertices):
     # order a single boundary component (loop or open chain)
@@ -345,6 +303,7 @@ def _order_boundary_loop(badj, comp_vertices):
         prev, cur = cur, nxt
     return np.array(ordered, dtype=int)
 
+
 def _minimal_cover_arc(seed_positions, L):
     p = np.sort(np.unique(seed_positions))
     if p.size == 1:
@@ -355,9 +314,11 @@ def _minimal_cover_arc(seed_positions, L):
     end   = int(p[i_largest])
     return start, end  # circular indices in [0..L-1]
 
+
 def _ring_interval_indices(start, end, L):
     return np.arange(start, end+1, dtype=int) if start <= end else \
            np.r_[np.arange(start, L, dtype=int), np.arange(0, end+1, dtype=int)]
+
 
 def _ring_dilate(mask_ring, steps=0):
     if steps <= 0: return mask_ring
@@ -511,6 +472,7 @@ def stitch_hippocampus_neocortex_gifti_nearestDP(
 # 2) APPLYING TEMPLATES
 
 # ---------- helpers ----------
+
 def _gifti_vertices_faces(gi: GiftiImage):
     POINTSET = intent_codes['NIFTI_INTENT_POINTSET']
     TRIANGLE = intent_codes['NIFTI_INTENT_TRIANGLE']
@@ -530,6 +492,7 @@ class OverlapStitchTemplate:
     keep_cortex_idx: np.ndarray   # sorted ascending
     keep_hippo_idx: np.ndarray    # sorted ascending
     faces_template: np.ndarray    # faces reindexed to [C_keep; H_keep] layout (int32)
+
 
 def make_overlap_stitch_template(
     ref_cortex_gii: GiftiImage,
@@ -597,6 +560,7 @@ def make_overlap_stitch_template(
         faces_template=F_template,
     )
 
+
 def apply_overlap_stitch_template(
     cortex_gii: GiftiImage,
     hippo_gii: GiftiImage,
@@ -647,20 +611,27 @@ def apply_overlap_stitch_template(
 
 # --------------------------------------
 # 2.a) Wrappers
-def stitchSurfs(ctx, hipp, out_dir:str, out_name:str, template:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/overlap_stitch_template.pkl"):
+def stitchSurfs(ctx, hipp, save_name:str, template:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/overlap_stitch_template.pkl", verbose = False):
     """
     Stitch cortical and hippocampal surfaces together based on a template.
     Cortical and hippocampal surfaces should match (i.e., ctx lbl-pial with hipp lbl-inner; ctx lbl-white with hipp lbl-outer).
     """
-    
-    # stitch surfaces based on template
-    import pickle
+    class _RedirectUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == "__main__":
+                try:
+                    import stitchSurfs as _local_mod
+                    return getattr(_local_mod, name)
+                except Exception:
+                    return super().find_class(module, name)
+            return super().find_class(module, name)
+
     with open(template, "rb") as f:
-        template = pickle.load(f)
-    
+        template = _RedirectUnpickler(f).load()
+
     new_stitched = apply_overlap_stitch_template(ctx, hipp, template)
-    save_name = os.path.join(out_dir, out_name + ".surf.gii")
     nib.save(new_stitched, save_name)
-    print(f"Saved stitched surface to: {save_name}")
+    if verbose:
+        print(f"Saved stitched surface to: {save_name}")
 
     return save_name
