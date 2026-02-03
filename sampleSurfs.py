@@ -109,7 +109,7 @@ def make_equivolumetric_surfaces(white_coords, pial_coords, faces, fractions):
     return out
 
 
-def get_equiVolSurfs(white:str, pial:str, root:str, nSurfs:int, verbose:bool = False):
+def get_equiVolSurfs(white:str, pial:str, root:str, nSurfs:int, verbose:bool = False, outNamePrefix: str = None) -> list:
     
     Vw, Fw = load_gifti_surf(os.path.join(root, white))
     Vp, Fp = load_gifti_surf(os.path.join(root, pial))
@@ -124,8 +124,12 @@ def get_equiVolSurfs(white:str, pial:str, root:str, nSurfs:int, verbose:bool = F
     mids = make_equivolumetric_surfaces(Vw, Vp, F, fractions)
     out_paths = []
     for f, Vm in zip(fractions, mids):
-        fract_fmt = f"{f:.2f}".replace('.', 'p')
-        out_path = os.path.join(root, f"equivol_f-{fract_fmt}.surf.gii")
+        x = int(np.abs(fractions - f).argmin()) + 1
+        outName = f"equivol-{x}of{nSurfs}.surf.gii"
+        if outNamePrefix:
+            outName = f"{outNamePrefix}_{outName}"
+        out_path = os.path.join(root, outName)
+        
         save_gifti_surf(out_path, Vm, F)
         
         out_paths.append(out_path)

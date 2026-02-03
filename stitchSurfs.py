@@ -3,9 +3,10 @@
 # 2) applying this stitching to given individual-surfaces
 # 2.a) wrappers for file I/O
 
-# Code provided by Jordan deKraker and built on by DMendelson
+# Code provided by Jordan DeKraker and built on by DMendelson
 
 import os
+import pickle
 import numpy as np
 import nibabel as nib
 from nibabel.gifti import GiftiImage, GiftiDataArray
