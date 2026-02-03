@@ -73,6 +73,7 @@ def stitch_surfs_from_df(dirs_project:dict, study_dicts:list, df:pd.DataFrame, l
         
         print(f"{uid}@{study}: {id}-{ses}")
         out_dir = get_path_data(dirs_project = dirs_project, studyName=study_dict['studyName'], id=id, ses=ses)
+        out_dir = os.path.join(out_dir, 'surfs/') # ./data/{studyName}/{id}_{ses}/surfs/
         make_dir(out_dir)
 
         surface_combinations = iterate_labels(lbls_surfs) # keep correspondence between cortical and hippocampal surfaces
