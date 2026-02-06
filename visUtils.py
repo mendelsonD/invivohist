@@ -1,5 +1,6 @@
-def getCMD_freeView(surf_pths:list, vol_pth:str, colour=True) ->  str:
+def getCMD_freeView(surf_pths:list, vol_pth:str, colour:dict={'do': True, 'outer': 'red', 'inner': 'blue'}) ->  str:
     cmd = "freeview"
+    
     
     colours = {
         "hipp_inner": 'orange',
@@ -13,7 +14,7 @@ def getCMD_freeView(surf_pths:list, vol_pth:str, colour=True) ->  str:
     }
 
     for surf in surf_pths:
-        if colour:
+        if colour['do']:
             # from string extract chars after '_label-'
             lbl = surf.split("_label-")[-1].split(".surf.gii")[0].split(".shape.gii")[0]
             edgecolor = colours.get(lbl, 'white')
