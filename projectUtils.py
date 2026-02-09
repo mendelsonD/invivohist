@@ -7,21 +7,31 @@ import importlib
 import numpy as np
 import pandas as pd
 import nibabel as nib
+import subprocess as sp
+
+sys.path.append('/host/verges/tank/data/daniel/00_commonUtils/00_code/genUtils/')
+
+import gen
+import bids_naming as names
+import niiVolumes as niiVols
+importlib.reload(gen)
+importlib.reload(names)
+importlib.reload(niiVols)
 
 import stitchSurfs as stitch
 import sampleSurfs as sample
 importlib.reload(stitch)
 importlib.reload(sample)
 
-sys.path.append('/host/verges/tank/data/daniel/00_commonUtils/00_code/genUtils/')
-import gen
-import bids_naming as names
-importlib.reload(gen)
-importlib.reload(names)
 
-def get_names_stitchSurf(id, ses, ctx_lbl:str, ctx_surf:str, hipp_lbl:str, hipp_surf:str) -> tuple:
+def get_names_stitchSurf(id, ses, ctx_lbl:str, ctx_surf:str, hipp_lbl:str, hipp_surf:str, str_append:str=None) -> tuple:
+    
     id_ses_fmt = f"{gen.fmt_id(id)}_{gen.fmt_ses(ses)}"
-    main = f"ctxSurf-{ctx_surf}_ctxLbl-{ctx_lbl}_hippSurf-{hipp_surf}_hippLbl-{hipp_lbl}_stitched.surf.gii"
+    main = f"ctxSurf-{ctx_surf}_ctxLbl-{ctx_lbl}_hippSurf-{hipp_surf}_hippLbl-{hipp_lbl}_stitched"
+    if str_append:
+        main += f"_{str_append}"
+    main = f"{main}.surf.gii"
+
     l = f"{id_ses_fmt}_hemi-L_{main}"
     r = f"{id_ses_fmt}_hemi-R_{main}"
     return l, r
@@ -72,10 +82,12 @@ def iterHelp(pt, study_dicts, verbose=False):
     return uid, study, ses, id, study_dict, mics_id, pni_id
 
 def stitch_surfs_from_df(dirs_project:dict, study_dicts:list, df:pd.DataFrame, lbls_surfs:dict, symlink:bool=False, verbose=True) -> list:
+    
     # stitch cortical and hippocampal surfaces together. NOTE. Jordan code
     print(f"[stitch_surfs_from_df] Stitching surfaces for {len(df)} rows (unique participant-study-session)...")
     
     stitch_paths = []
+    date = gen.fmt_now()
     for pt in df.itertuples():
         uid, study, ses, id, study_dict, mics_id, pni_id = iterHelp(pt, study_dicts, verbose=verbose)
         
@@ -96,7 +108,7 @@ def stitch_surfs_from_df(dirs_project:dict, study_dicts:list, df:pd.DataFrame, l
             ctx_surf, ctx_lbl = surfs[0], lbls[0]
             hipp_surf, hipp_lbl = surfs[1], lbls[1]
 
-            stched_name_l, stched_name_r = get_names_stitchSurf(id=id, ses=ses, ctx_lbl=ctx_lbl, ctx_surf=ctx_surf, hipp_lbl=hipp_lbl, hipp_surf=hipp_surf)
+            stched_name_l, stched_name_r = get_names_stitchSurf(id=id, ses=ses, ctx_lbl=ctx_lbl, ctx_surf=ctx_surf, hipp_lbl=hipp_lbl, hipp_surf=hipp_surf, str_append=date)
             out_path_stitched_l, out_path_stitched_r = os.path.join(out_dir, stched_name_l), os.path.join(out_dir, stched_name_r)
             
             # CHECK IF FILE ALREADY EXISTS. If so, skip stitching and add existing path to stitch_paths list.
@@ -121,15 +133,25 @@ def stitch_surfs_from_df(dirs_project:dict, study_dicts:list, df:pd.DataFrame, l
                 # create symlink of original surfaces in the output directory
                 orig_out_pth = os.path.join(out_dir, 'orig')
                 make_dir(orig_out_pth)
-                os.symlink(mp_surfs[0], os.path.join(orig_out_pth, os.path.basename(mp_surfs[0])))
-                os.symlink(mp_surfs[1], os.path.join(orig_out_pth, os.path.basename(mp_surfs[1])))
-                os.symlink(hu_surfs[0], os.path.join(orig_out_pth, os.path.basename(hu_surfs[0])))
-                os.symlink(hu_surfs[1], os.path.join(orig_out_pth, os.path.basename(hu_surfs[1])))
+                links = [
+                    (mp_surfs[0], os.path.join(orig_out_pth, os.path.basename(mp_surfs[0]))),
+                    (mp_surfs[1], os.path.join(orig_out_pth, os.path.basename(mp_surfs[1]))),
+                    (hu_surfs[0], os.path.join(orig_out_pth, os.path.basename(hu_surfs[0]))),
+                    (hu_surfs[1], os.path.join(orig_out_pth, os.path.basename(hu_surfs[1]))),
+                ]
+                for src, dst in links: # If destination exists (file or symlink), do nothing
+                    
+                    if os.path.lexists(dst):
+                        continue
+                    try:
+                        os.symlink(src, dst)
+                    except FileExistsError:
+                        pass
 
-    return stitch_paths
+    return stitch_paths, date
 
 
-def sample_stitchedSurfs_from_df(df:pd.DataFrame, study_dicts:list, dirs_project:dict, nSurfs:int=16, ctx_surf:str="fsLR-32k", hipp_surf:str="den-0p5mm", mask_info:dict={'perform': False}, verbose:bool=True) -> None:
+def sample_stitchedSurfs_from_df(df:pd.DataFrame, study_dicts:list, dirs_project:dict, nSurfs:int=16, ctx_surf:str="fsLR-32k", hipp_surf:str="den-0p5mm", mask_info:dict={'perform': False}, str_append:str=None, verbose:bool=True) -> None:
 
     print(f"[sample_stitchedSurfs_from_df] Sampling {nSurfs} equi-volume surfaces from stitched surfaces for {len(df)} rows (unique participant-study-session)...")
     for pt in df.itertuples():
@@ -143,17 +165,17 @@ def sample_stitchedSurfs_from_df(df:pd.DataFrame, study_dicts:list, dirs_project
         outNamePrefix = f"{gen.fmt_id_ses(id,ses)}"
        
 
-        stitched_white_outer_L, stitched_white_outer_R = get_names_stitchSurf(id, ses, ctx_lbl='white', ctx_surf=ctx_surf, hipp_lbl='outer', hipp_surf=hipp_surf)  # left hemisphere
-        stitched_pial_inner_L, stitched_pial_inner_R = get_names_stitchSurf(id, ses, ctx_lbl='pial', ctx_surf=ctx_surf, hipp_lbl='inner', hipp_surf=hipp_surf)  # left hemisphere
-        
+        stitched_white_outer_L, stitched_white_outer_R = get_names_stitchSurf(id, ses, ctx_lbl='white', ctx_surf=ctx_surf, hipp_lbl='outer', hipp_surf=hipp_surf, str_append=str_append)
+        stitched_pial_inner_L, stitched_pial_inner_R = get_names_stitchSurf(id, ses, ctx_lbl='pial', ctx_surf=ctx_surf, hipp_lbl='inner', hipp_surf=hipp_surf, str_append=str_append)
+
         if mask_info['perform']:
             stitched_white_outer_L = stitched_white_outer_L.replace(".surf.gii", f"_mask-{mask_info['maskSuffix']}.surf.gii")
             stitched_white_outer_R = stitched_white_outer_R.replace(".surf.gii", f"_mask-{mask_info['maskSuffix']}.surf.gii")
             stitched_pial_inner_L = stitched_pial_inner_L.replace(".surf.gii", f"_mask-{mask_info['maskSuffix']}.surf.gii")
             stitched_pial_inner_R = stitched_pial_inner_R.replace(".surf.gii", f"_mask-{mask_info['maskSuffix']}.surf.gii")
 
-        surfs_L = sample.get_equiVolSurfs(white=stitched_white_outer_L, pial=stitched_pial_inner_L, root=out_dir, nSurfs=nSurfs, outNamePrefix=f"{outNamePrefix}_hemi-L")
-        surfs_R = sample.get_equiVolSurfs(white=stitched_white_outer_R, pial=stitched_pial_inner_R, root=out_dir, nSurfs=nSurfs, outNamePrefix=f"{outNamePrefix}_hemi-R")
+        surfs_L = sample.get_equiVolSurfs(white=stitched_white_outer_L, pial=stitched_pial_inner_L, root=out_dir, nSurfs=nSurfs, outNamePrefix=f"{outNamePrefix}_hemi-L_{str_append}")
+        surfs_R = sample.get_equiVolSurfs(white=stitched_white_outer_R, pial=stitched_pial_inner_R, root=out_dir, nSurfs=nSurfs, outNamePrefix=f"{outNamePrefix}_hemi-R_{str_append}")
 
         if verbose:
             print(f"\tSurfaces L: {surfs_L}")
@@ -197,30 +219,24 @@ def make_mask(lbl_tmplt_pth:str, csv_pth:str, label_col:list[str, str], label_va
 
     return save
 
-def apply_mask_to_stitchedGii(input_file:str, mask_file:str, output_file:str, apply_to_labels:bool=False) -> None:
+def apply_mask_to_stitchedGii(pth_input_gii:str, pth_mask:str, pth_out:str, apply_to_labels:bool=False) -> None:
     """
     Apply mask to .surf.gii (coordinates/triangles) or .label.gii
-    
-    Parameters:
-    - input_file: str, input .surf.gii OR .label.gii
-    - mask_file: str, binary mask .label.gii OR .shape.gii (0/1 values)
-    - output_file: str, output path
-    - apply_to_labels: bool, if True, mask a label file (keep values), else mask surface vertices
     """
     
     # Load input and mask
-    input_gii = nib.load(input_file)
-    mask_gii = nib.load(mask_file)
+    input_gii = nib.load(pth_input_gii)
+    mask_gii = nib.load(pth_mask)
     mask_data = mask_gii.darrays[0].data.astype(bool)  # Convert 0/1 → True/False
     
     assert len(mask_data) == input_gii.darrays[0].data.shape[0], "Vertex count mismatch"
     
-    if apply_to_labels:
-        # **LABEL MASKING**: Keep label values where mask=True, set 0 elsewhere
-        label_data = input_gii.darrays[0].data.copy()
-        label_data[~mask_data] = 0  # Zero out masked vertices
+    if apply_to_labels: # **LABEL MASKING**: Keep label values where mask=True, set 0 elsewhere
         
-        # Save masked labels
+        label_data = input_gii.darrays[0].data.copy()
+        label_data[~mask_data] = 0
+        
+        # output
         output_gii = nib.GiftiImage()
         output_gii.add_gifti_data_array(
             nib.gifti.GiftiDataArray(label_data.astype(np.int32), 
@@ -228,13 +244,10 @@ def apply_mask_to_stitchedGii(input_file:str, mask_file:str, output_file:str, ap
         )
         n_keep = np.sum(output_gii.darrays[0].data != 0)
         
-    else:
-        # **SURFACE MASKING**: Remove masked vertices + retriangulate
-        # Coordinates array
+    else:  # **SURFACE MASKING**: Remove masked vertices + retriangulate
         coord_array = input_gii.get_arrays_from_intent('NIFTI_INTENT_POINTSET')[0]
         coords = coord_array.data
-        
-        # Triangle array  
+         
         triangle_array = input_gii.get_arrays_from_intent('NIFTI_INTENT_TRIANGLE')[0]
         faces = triangle_array.data
         
@@ -253,7 +266,7 @@ def apply_mask_to_stitchedGii(input_file:str, mask_file:str, output_file:str, ap
         valid_faces = np.all(old_to_new[faces] != -1, axis=1)
         new_faces = old_to_new[faces[valid_faces]]
         
-        # Create new surface
+        # output
         output_gii = nib.GiftiImage()
         output_gii.add_gifti_data_array(
             nib.gifti.GiftiDataArray(new_coords.astype(np.float32), 
@@ -265,10 +278,11 @@ def apply_mask_to_stitchedGii(input_file:str, mask_file:str, output_file:str, ap
         )
     
     # Save
-    nib.save(output_gii, output_file)
-    print(f"Saved: {output_file}")
-    print(f"Vertices: {len(mask_data)} → {n_keep}")
-    return output_file
+    nib.save(output_gii, pth_out)
+    print(f"\tVertices: {len(mask_data)} → {n_keep}")
+    print(f"\tSaved [{gen.fmt_file_size(pth_out)}]: {pth_out}")
+
+    return pth_out
 
 
 def apply_mask_toStitchedSurfaces(surf_pths:list[str], mask_pth:str, outNameSuffix:str) -> list[str]:
@@ -282,3 +296,79 @@ def apply_mask_toStitchedSurfaces(surf_pths:list[str], mask_pth:str, outNameSuff
         surf_mask_pths.append(output_file)
 
     return surf_mask_pths
+
+
+def surf_to_map_from_df(df:pd.DataFrame, study_dicts:list[dict], dirs_project:dict, volNames:list[str], visualization_params:dict, smoothing:int=0, verbose:bool=True) -> None:
+    print(f"[surf_to_map_from_df] Sampling surface values to volume for {len(df)} rows (unique participant-study-session)...")
+    
+    smth_fmt = str(smoothing).replace('.', 'p')
+    
+    surf_ptrn = visualization_params['equiVol_str']
+    pattern_mid = surf_ptrn
+    
+    nSurfs = visualization_params['nSurfs']
+    pattern_n = f"of{nSurfs}"
+
+    for pt in df.itertuples():
+        uid, study, ses, id, study_dict, mics_id, pni_id = iterHelp(pt, study_dicts, verbose=verbose)
+        
+        if study_dict is None:
+            continue
+
+        id_ses_fmt = gen.fmt_id_ses(id, ses)
+
+        dir_pt_root = get_path_data(dirs_project=dirs_project, studyName=study_dict['studyName'], id=id, ses=ses)
+        dir_surfs = os.path.join(dir_pt_root, 'surfs')
+        if not os.path.isdir(dir_surfs):
+            print(f"\t\t[surf_to_map_from_df] WARNING: {id_ses_fmt} | Expected directory not found {dir_surfs}. Skipping participant at this study and session.")
+            continue
+        
+        dir_maps  = os.path.join(dir_pt_root, 'maps')
+        make_dir(dir_maps)
+        
+        # get list of relevant surface file paths        
+        surf_files = [os.path.join(dir_surfs, f) for f in os.listdir(dir_surfs)
+                      if f.startswith(id_ses_fmt) and (pattern_mid in f) and (pattern_n in f)]
+
+        if len(surf_files) == 0:
+            print(f"\t\t[surf_to_map_from_df] WARNING: {id_ses_fmt} | No surface files matching patterns '{id_ses_fmt}', '{pattern_mid}', '{pattern_n}' in {dir_surfs}. Skipping participant at this study and session.")
+            continue
+        
+        if verbose:
+            print(f"\t\tFound {len(surf_files)} relevant surfaces in {dir_surfs}: {surf_files}")
+
+        # sample each volume with each surface
+        for volName in volNames:
+            if verbose:
+                print(f"\t\tSampling '{volName}'...")
+            #print(f"get_volPth call: \n\tstudy={study_dict}\n\tid={id}\n\tses={ses}\n\tvolName={volName}\n\tspace='nativepro'")
+            vol_pth = names.get_volPath(study=study_dict, id=id, ses=ses, volName=volName, space='nativepro')[0]
+            if vol_pth is None:
+                print(f"\t\t[surf_to_map_from_df] WARNING: {id_ses_fmt} | No volume found for feature '{volName}'. Skipping volume.")
+                continue
+
+            for surf_pth in surf_files:
+                
+                surf_file_name = os.path.basename(surf_pth)
+                out_pth_0Smth = os.path.join(dir_maps, 
+                                             surf_file_name.replace('.surf.gii', f'_map-{volName}_smth-0mm.func.gii'))
+                
+                if not os.path.exists(out_pth_0Smth):
+                    #print(f"map call: vol_pth={vol_pth}\n\tsurf_pth={surf_pth}\n\tout_pth={out_pth_0Smth}")
+                    map_pth_0Smth = niiVols.map(vol_pth=vol_pth,
+                                                surf_pth=surf_pth,
+                                                out_pth=out_pth_0Smth,
+                                                verbose=verbose)
+                else:
+                    map_pth_0Smth = out_pth_0Smth
+               
+                if smoothing > 0:
+                    out_pth_smth = os.path.join(dir_maps, 
+                                                surf_file_name.replace('.surf.gii', f'_map-{volName}_smth-{smth_fmt}mm.func.gii'))
+                    
+                    print(f"smooth_map call: vol_pth={vol_pth}\n\tmap_pth={map_pth_0Smth}\n\tsmth_mm={smoothing}\n\tout_pth={out_pth_smth}")
+                    out_pth_smth = niiVols.smoothMap(surf_pth=surf_pth, 
+                                                      map_pth=map_pth_0Smth, 
+                                                      smth_mm=smoothing, 
+                                                      out_pth=out_pth_smth, 
+                                                      verbose=verbose)
