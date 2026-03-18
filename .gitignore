@@ -3,6 +3,11 @@ data/
 */data/
 **/data/
 
+# Reources
+resources/
+*/resources/
+**/resources/
+
 # Cache directories
 cache/
 */cache/

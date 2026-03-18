@@ -11,12 +11,14 @@ import pickle
 import numpy as np
 import pandas as pd
 import nibabel as nib
+import importlib
 from nibabel.gifti import GiftiImage, GiftiDataArray
 from nibabel.nifti1 import intent_codes
 from dataclasses import dataclass
 
 sys.path.append('/host/verges/tank/data/daniel/')
 import gen
+importlib.reload(gen)
 
 #==========================================
 # 1) MAKING TEMPLATES
@@ -617,7 +619,7 @@ def apply_overlap_stitch_template(
 
 # --------------------------------------
 # 2.a) Wrappers
-def stitchSurfs(ctx, hipp, save_name:str, template_pth:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/overlap_stitch_template_JD_Jan2026.pkl", verbose = False):
+def stitchSurfs(ctx, hipp, save_name:str, template_pth:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/templates/overlap_stitch_template_JD_Jan2026.pkl", verbose = False):
     """
     Stitch cortical and hippocampal surfaces together based on a template.
     Cortical and hippocampal surfaces should match (i.e., ctx lbl-pial with hipp lbl-inner; ctx lbl-white with hipp lbl-outer).
@@ -642,36 +644,33 @@ def stdColNames(df:pd.DataFrame, colNames:list) -> pd.DataFrame:
     
     return df_out
 
-def resolve_OverlapLblVals(ctx:dict, hipp:dict, outPth:str, outName:str) -> tuple[np.ndarray, dict]:
+def resolve_OverlapLblVals(ctx_lbl_gii_in:np.ndarray, hipp_lbl_gii_in:np.ndarray, ctx:dict, hipp:dict, outPth:str, outName:str) -> tuple[np.ndarray, dict]:
     # if there are overlapping label values, 
     # then then offset hippocampal labels integers by the max value in the cortex numbers
     # return gii objects with new label numbers and save csv concatenating these label value, region name correspondences
 
-    ctx_df_in = pd.read_csv(ctx['pth_csv'], header=0)
-    ctx_df_in = stdColNames(ctx_df_in, ctx['csv_idx_label_colNames'])
+    ctx_df_in = pd.read_csv(ctx['pth_lut'], header=0)
+    ctx_df_in = stdColNames(ctx_df_in, ctx['lut_idx_label_colNames'])
     ctx_df_in['lblSrc'] = ctx['parcellationName']
     ctx_df_in['origIdx'] = ctx_df_in['idx']
 
-    hipp_df_in = pd.read_csv(hipp['pth_csv'], header=0)
-    hipp_df_in = stdColNames(hipp_df_in, hipp['csv_idx_label_colNames'])
+    hipp_df_in = pd.read_csv(hipp['pth_lut'], header=0)
+    hipp_df_in = stdColNames(hipp_df_in, hipp['lut_idx_label_colNames'])
     hipp_df_in['lblSrc'] = hipp['parcellationName']
     hipp_df_in['origIdx'] = hipp_df_in['idx']
 
-    ctx_lbl_gii_in = nib.load(ctx['pth_label_gii']).darrays[0].data
-    hipp_lbl_gii_in = nib.load(hipp['pth_label_gii']).darrays[0].data
     overlapping_labels = set(ctx_lbl_gii_in) & set(hipp_lbl_gii_in)    
 
+    hipp_df_updated = hipp_df_in.copy()
+    hipp_lbl_gii_updated = hipp_lbl_gii_in.copy()
     if overlapping_labels:
         max_ctxLblVal = max(ctx_lbl_gii_in) + 1 # if 0 indexed
         print(f"[stitch.resolve_OverlapLblVals] Found {len(overlapping_labels)} overlapping label values for cortical and hippocampal parcelletations.\n\tOffsetting hippocampal labels by {max_ctxLblVal}.")
-
-        hipp_df_updated = hipp_df_in.copy()
         hipp_df_updated['idx'] += max_ctxLblVal
-        hipp_lbl_gii_updated = hipp_lbl_gii_in.copy()
         hipp_lbl_gii_updated += max_ctxLblVal
     else:
         print("No overlapping label values found between cortical and hippocampal labels.")
-        hipp_lbl_gii_updated = hipp_lbl_gii_in.copy()
+        
 
     output_overlap = set(ctx_lbl_gii_in) & set(hipp_lbl_gii_updated)
     if len(output_overlap) > 0:
@@ -679,42 +678,59 @@ def resolve_OverlapLblVals(ctx:dict, hipp:dict, outPth:str, outName:str) -> tupl
 
     df_merge = pd.concat([ctx_df_in, hipp_df_updated], ignore_index=True)
     
-    save_pth = os.path.join(outPth, f"stitch_lblValDetails_{outName}.csv")
+    save_pth = os.path.join(outPth, f"lut_stitch_{outName}.csv")
     df_merge.to_csv(save_pth, index=False)
-    print(f"\tSaved merged label CSV to: {save_pth}")
+    print(f"\tSaved merged look up table ({gen.fmt_file_size(save_pth)}): {save_pth}")
 
-    return ctx_lbl_gii_in, hipp_lbl_gii_updated
+    return df_merge, save_pth
 
+def remapLblIdx(lbl_gii_in:np.ndarray, parcellationName:str, keysDf:pd.DataFrame, verbose:bool=True) -> np.ndarray:
+    relevantKeys = keysDf[keysDf['lblSrc'] == parcellationName]
+    lbl_remap = lbl_gii_in.copy()
+    
+    if verbose:
+        print('Remapping labels:')
+    for _, row in relevantKeys.iterrows():
+        if verbose:
+            print(f"\t  [{parcellationName}@{row['SName']}]    \t{row['origIdx']} -> {row['idx']}")
+        lbl_remap[lbl_gii_in == row['origIdx']] = row['idx']
+    return lbl_remap
 
-def stitchLabels(ctx_lbl:dict, hipp_lbl:dict, outPth:str, template_pth:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/overlap_stitch_template_JD_Jan2026.pkl") -> tuple[GiftiImage, str]:
+def stitchLabels(ctx_lbl:dict, hipp_lbl:dict, outPth:str, template_pth:str = "/host/verges/tank/data/daniel/04_inVivoHistology/code/resources/templates/overlap_stitch_template_JD_Jan2026.pkl", verbose=False) -> tuple[str, str]:
     """
     Take labels for the fslr32k and den-0p5mm surfaces (.label.gii)
     Return a single label file with labels for corresponding vertices in the stitched surface, 
     """
-    outName = f"ctx-{ctx_lbl['parcName']}_hipp-{hipp_lbl['parcName']}_{gen.fmt_now()}"
+    outName = f"ctx-{ctx_lbl['parcName']}_hipp-{hipp_lbl['parcName']}_{gen.fmt_now(time=False)}"
 
-    ctx_lbl_gii_in, hipp_lbl_gii_in = resolve_OverlapLblVals(ctx_lbl, hipp_lbl, outPth, outName)
+    ctx_lbl_gii_in = nib.load(ctx_lbl['pth_label_gii']).darrays[0].data
+    hipp_lbl_gii_in = nib.load(hipp_lbl['pth_label_gii']).darrays[0].data
+    
+    lblValDetails, lut_outpath = resolve_OverlapLblVals(ctx_lbl_gii_in, hipp_lbl_gii_in, ctx_lbl, hipp_lbl, outPth, outName)
 
+    ctx_lbl_remap = remapLblIdx(ctx_lbl_gii_in, ctx_lbl['parcellationName'], keysDf = lblValDetails, verbose=verbose)
+    hipp_lbl_remap = remapLblIdx(hipp_lbl_gii_in, hipp_lbl['parcellationName'], keysDf = lblValDetails, verbose=verbose)
 
     tmpl = load_template(template_pth)
-    
+    # change label number to reflect new label index from csv details file.
+
     lbl_out = np.concatenate([
-        ctx_lbl_gii_in[tmpl.keep_cortex_idx],
-        hipp_lbl_gii_in[tmpl.keep_hippo_idx]
+        ctx_lbl_remap[tmpl.keep_cortex_idx],
+        hipp_lbl_remap[tmpl.keep_hippo_idx]
     ]).astype(np.int32)
 
-    gi = GiftiImage()
-    gi.add_gifti_data_array(GiftiDataArray(
+    lbl_stitch = GiftiImage()
+    lbl_stitch.add_gifti_data_array(GiftiDataArray(
         data=lbl_out,
         intent='NIFTI_INTENT_LABEL',
         datatype='NIFTI_TYPE_INT32'
     ))
 
-    gi_lbl_outPath = os.path.join(outPth, f"stitch_lblVals_{outName}.label.gii")
+    lbl_stitch_outpth = os.path.join(outPth, f"labels_stitch_{outName}.label.gii")
 
-    nib.save(gi, gi_lbl_outPath)
-    print(f"\tSaved stitched label Gifti to: {gi_lbl_outPath}")
-    return gi
+    nib.save(lbl_stitch, lbl_stitch_outpth)
+    print(f"\tSaved Gifti with updated label values ({gen.fmt_file_size(lbl_stitch_outpth)}): {lbl_stitch_outpth}")
+    return lbl_stitch_outpth, lut_outpath
 
 def load_template(template_path: str):
     class _RedirectUnpickler(pickle.Unpickler):
