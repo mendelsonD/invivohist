@@ -8,6 +8,20 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from scipy.special import logit
 
+def fmt_id(uid, study, mics_id, pni_id, ses):
+    mics_id_fmt = mics_id if pd.notna(mics_id) else 'nan'
+    pni_id_fmt = pni_id if pd.notna(pni_id) else 'nan'
+    return f"{uid}@{study}-{mics_id_fmt}-{pni_id_fmt}-{ses}"
+
+def fmt_ids(df):
+    demo_list = []
+    for idx, row in df.iterrows():
+            mics_id = row['MICS_ID'] if pd.notna(row['MICS_ID']) else 'nan'
+            pni_id = row['PNI_ID'] if pd.notna(row['PNI_ID']) else 'nan'
+            id_fmt = fmt_id(row['UID'], row['study'], mics_id, pni_id, row['SES'])
+            demo_list.append(id_fmt)
+    return demo_list
+
 def clean_ses(df_grp:tuple[str,pd.DataFrame], method='first'):
     """
     If multiple rows per ID, choose first or last session
